@@ -115,6 +115,22 @@ resource "aws_security_group" "main" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Kafka REST Proxy
+  ingress {
+    from_port   = 8082
+    to_port     = 8082
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # API Gateway Proxy
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Allow all internal traffic
   ingress {
     from_port = 0
@@ -219,18 +235,25 @@ resource "aws_s3_bucket_notification" "bucket_notification" {
 }
 
 # Lambda Function
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "lambda_function.py"
+  output_path = "lambda_function.zip"
+}
+
 resource "aws_lambda_function" "s3_kafka_publisher" {
   filename         = "lambda_function.zip"
   function_name    = "s3-kafka-publisher"
   role            = aws_iam_role.lambda_role.arn
   handler         = "lambda_function.lambda_handler"
-  source_code_hash = filebase64sha256("lambda_function.zip")
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   runtime         = "python3.11"
   timeout         = 60
 
   environment {
     variables = {
       KAFKA_BOOTSTRAP_SERVERS = "${aws_instance.kubernetes_master.public_ip}:9092"
+      KAFKA_REST_PROXY_URL   = "http://${aws_instance.kubernetes_master.public_ip}:8082"
       KAFKA_TOPIC            = "s3-events"
     }
   }
@@ -284,9 +307,14 @@ resource "aws_api_gateway_integration" "kafka_integration" {
 
 resource "aws_api_gateway_deployment" "kafka_api_deployment" {
   rest_api_id = aws_api_gateway_rest_api.kafka_api.id
-  stage_name  = "prod"
 
   depends_on = [aws_api_gateway_integration.kafka_integration]
+}
+
+resource "aws_api_gateway_stage" "kafka_api_stage" {
+  deployment_id = aws_api_gateway_deployment.kafka_api_deployment.id
+  rest_api_id   = aws_api_gateway_rest_api.kafka_api.id
+  stage_name    = "prod"
 }
 
 # Kubernetes Master Node
@@ -311,7 +339,7 @@ resource "aws_instance" "kubernetes_master" {
                 
                 # Install Docker for Kafka
                 yum update -y
-                yum install -y docker
+                yum install -y docker python3-pip
                 systemctl start docker
                 systemctl enable docker
                 
@@ -319,6 +347,283 @@ resource "aws_instance" "kubernetes_master" {
                 curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
                 chmod +x /usr/local/bin/docker-compose
                 
+                # Setup Project Directory
+                mkdir -p /home/ec2-user/project
+                cd /home/ec2-user/project
+
+                # Create Directories
+                mkdir -p logstash/config logstash/pipeline api-gateway-proxy k8s
+
+                # Write docker-compose.yml (including api-proxy)
+                cat << 'DOCKER_COMPOSE' > docker-compose.yml
+                version: '3.8'
+
+                services:
+                  zookeeper:
+                    image: confluentinc/cp-zookeeper:latest
+                    container_name: zookeeper
+                    environment:
+                      ZOOKEEPER_CLIENT_PORT: 2181
+                      ZOOKEEPER_TICK_TIME: 2000
+                    ports:
+                      - "2181:2181"
+                    networks:
+                      - kafka-network
+
+                  kafka:
+                    image: confluentinc/cp-kafka:latest
+                    container_name: kafka
+                    depends_on:
+                      - zookeeper
+                    ports:
+                      - "9092:9092"
+                      - "29092:29092"
+                    environment:
+                      KAFKA_BROKER_ID: 1
+                      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+                      # Use the EC2 private IP for the external listener so K8s pods can reach it
+                      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://${aws_instance.kubernetes_master.private_ip}:9092
+                      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+                      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+                      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+                      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+                    networks:
+                      - kafka-network
+
+                  elasticsearch:
+                    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+                    container_name: elasticsearch
+                    environment:
+                      - discovery.type=single-node
+                      - xpack.security.enabled=false
+                      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+                    ports:
+                      - "9200:9200"
+                      - "9300:9300"
+                    volumes:
+                      - elasticsearch-data:/usr/share/elasticsearch/data
+                    networks:
+                      - elk-network
+
+                  logstash:
+                    image: docker.elastic.co/logstash/logstash:8.11.0
+                    container_name: logstash
+                    depends_on:
+                      - elasticsearch
+                    ports:
+                      - "5000:5000"
+                      - "9600:9600"
+                    volumes:
+                      - ./logstash/pipeline:/usr/share/logstash/pipeline
+                      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml
+                    networks:
+                      - elk-network
+                      - kafka-network
+
+                  kibana:
+                    image: docker.elastic.co/kibana/kibana:8.11.0
+                    container_name: kibana
+                    depends_on:
+                      - elasticsearch
+                    ports:
+                      - "5601:5601"
+                    environment:
+                      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+                    networks:
+                      - elk-network
+
+                  kafka-rest-proxy:
+                    image: confluentinc/cp-kafka-rest:latest
+                    container_name: kafka-rest-proxy
+                    depends_on:
+                      - kafka
+                    ports:
+                      - "8082:8082"
+                    environment:
+                      KAFKA_REST_HOST_NAME: kafka-rest-proxy
+                      KAFKA_REST_BOOTSTRAP_SERVERS: kafka:29092
+                      KAFKA_REST_LISTENERS: http://0.0.0.0:8082
+                    networks:
+                      - kafka-network
+
+                  api-proxy:
+                    build:
+                      context: ./api-gateway-proxy
+                    container_name: api-proxy
+                    ports:
+                      - "8080:8080"
+                    environment:
+                      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+                      KAFKA_TOPIC: api-events
+                    depends_on:
+                      - kafka
+                    networks:
+                      - kafka-network
+
+                networks:
+                  kafka-network:
+                    driver: bridge
+                  elk-network:
+                    driver: bridge
+
+                volumes:
+                  elasticsearch-data:
+                    driver: local
+                DOCKER_COMPOSE
+
+                # Write Logstash Config
+                cat << 'LOGSTASH_YML' > logstash/config/logstash.yml
+                http.host: "0.0.0.0"
+                xpack.monitoring.enabled: false
+                LOGSTASH_YML
+
+                cat << 'LOGSTASH_CONF' > logstash/pipeline/logstash.conf
+                input {
+                  kafka {
+                    bootstrap_servers => "kafka:29092"
+                    topics => ["orders", "s3-events", "api-events"]
+                    codec => "json"
+                    group_id => "logstash-consumer-group"
+                    consumer_threads => 3
+                  }
+                }
+
+                filter {
+                  if ![timestamp] {
+                    mutate {
+                      add_field => { "timestamp" => "%{@timestamp}" }
+                    }
+                  }
+                  if [message] =~ /^\{.*\}$/ {
+                    json {
+                      source => "message"
+                      target => "parsed_message"
+                    }
+                  }
+                }
+
+                output {
+                  elasticsearch {
+                    hosts => ["elasticsearch:9200"]
+                    index => "logstash-%{+YYYY.MM.dd}"
+                  }
+                  stdout { codec => rubydebug }
+                }
+                LOGSTASH_CONF
+
+                # Write API Proxy App
+                cat << 'APP_PY' > api-gateway-proxy/app.py
+                from flask import Flask, request, jsonify
+                from kafka import KafkaProducer
+                import json
+                import logging
+                import os
+                import time
+
+                app = Flask(__name__)
+                logging.basicConfig(level=logging.INFO)
+                logger = logging.getLogger(__name__)
+
+                KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
+                KAFKA_TOPIC = os.environ.get('KAFKA_TOPIC', 'api-events')
+
+                # Retry connection to Kafka
+                producer = None
+                for i in range(10):
+                    try:
+                        producer = KafkaProducer(
+                            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS.split(','),
+                            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+                        )
+                        logger.info("Connected to Kafka")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Failed to connect to Kafka (attempt {i+1}): {e}")
+                        time.sleep(5)
+
+                @app.route('/health', methods=['GET'])
+                def health():
+                    return jsonify({'status': 'healthy'}), 200
+
+                @app.route('/publish', methods=['POST'])
+                def publish_event():
+                    try:
+                        if not producer:
+                             return jsonify({'error': 'Kafka producer not initialized'}), 500
+                        data = request.get_json()
+                        if not data: return jsonify({'error': 'No data provided'}), 400
+                        event = {'data': data, 'source': 'api-gateway'}
+                        producer.send(KAFKA_TOPIC, value=event)
+                        logger.info(f"Published event to Kafka: {event}")
+                        return jsonify({'status': 'success'}), 200
+                    except Exception as e:
+                        logger.error(f"Error publishing: {str(e)}")
+                        return jsonify({'error': str(e)}), 500
+
+                if __name__ == '__main__':
+                    app.run(host='0.0.0.0', port=8080)
+                APP_PY
+
+                cat << 'REQ_TXT' > api-gateway-proxy/requirements.txt
+                flask
+                kafka-python
+                REQ_TXT
+
+                cat << 'DOCKERFILE' > api-gateway-proxy/Dockerfile
+                FROM python:3.9-slim
+                WORKDIR /app
+                COPY requirements.txt .
+                RUN pip install --no-cache-dir -r requirements.txt
+                COPY app.py .
+                CMD ["python", "app.py"]
+                DOCKERFILE
+
+                # Start Docker Compose
+                /usr/local/bin/docker-compose up -d --build
+
+                # Deploy K8s Consumers
+                cat << 'K8S_S3' > k8s/kafka-consumer-s3-events.yaml
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: kafka-consumer-s3
+                spec:
+                  replicas: 1
+                  selector:
+                    matchLabels:
+                      app: kafka-consumer-s3
+                  template:
+                    metadata:
+                      labels:
+                        app: kafka-consumer-s3
+                    spec:
+                      containers:
+                      - name: consumer
+                        image: python:3.9-slim
+                        command: ["/bin/sh", "-c"]
+                        args:
+                          - |
+                            pip install kafka-python &&
+                            python -u -c '
+                            from kafka import KafkaConsumer
+                            import json
+                            import os
+
+                            consumer = KafkaConsumer(
+                                "s3-events",
+                                bootstrap_servers=["${aws_instance.kubernetes_master.private_ip}:9092"],
+                                auto_offset_reset="earliest",
+                                value_deserializer=lambda x: json.loads(x.decode("utf-8"))
+                            )
+                            print("Listening for messages on s3-events...")
+                            for message in consumer:
+                                print(f"Received: {message.value}")
+                            '
+                K8S_S3
+
+                export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+                kubectl apply -f k8s/
+
                 echo "Master node setup complete"
                 EOF
 
