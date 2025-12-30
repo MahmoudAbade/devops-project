@@ -1,0 +1,96 @@
+DevOps Final Project
+Architecture Implementation & Observability
+
+
+1. Introduction
+This document defines the final project for the DevOps course.
+The project assesses students’ ability to design, deploy, and document a cloud-based, event-driven architecture using industry-standard DevOps tools and practices.
+
+This is a practical, hands-on project that simulates real-world DevOps responsibilities.
+
+Important Scope Limitation:
+Continuous Integration / Continuous Deployment (CI/CD) pipelines and container registries are explicitly excluded from this project.
+2. Learning Objectives
+- Apply Infrastructure as Code principles using Terraform
+- Deploy and operate Kubernetes workloads on AWS
+- Implement event-driven systems using Kafka
+- Integrate AWS managed services
+- Implement centralized logging and observability
+- Produce professional technical documentation
+3. Architecture Overview
+Students are required to implement an event-driven architecture with the following components:
+
+• API Gateway serving as the external entry point
+• Apache Kafka as the messaging backbone
+• Kubernetes cluster running on EC2 instances
+• Kafka consumers deployed as Kubernetes workloads
+• AWS S3 triggering AWS Lambda functions
+• Centralized logging using Elasticsearch and Kibana
+
+All components must work together according to the provided architecture diagram.
+4. Technology Stack
+Students must use the following technologies:
+
+• AWS (EC2, VPC, IAM, API Gateway, S3, Lambda)
+• Kubernetes
+• Apache Kafka
+• Terraform
+• Elasticsearch
+• Kibana
+5. Project Requirements
+5.1 Infrastructure Provisioning
+All infrastructure must be provisioned using Terraform.
+
+Required resources include:
+• VPC, subnets, and security groups
+• EC2 instances for Kubernetes nodes
+• API Gateway
+• S3 bucket
+• Lambda function
+• IAM roles and policies
+
+Manual creation of infrastructure without Terraform is not allowed.
+
+5.2 Kubernetes Deployment
+Kafka consumer applications must be deployed into Kubernetes using Deployments and Services.
+Applications must be scalable and generate application logs.
+
+5.3 Kafka Integration
+Kafka must receive messages from API Gateway and Lambda.
+Students must define topics and consumer groups and document their design.
+
+5.4 S3 and Lambda Integration
+Uploading a file to S3 must trigger a Lambda function.
+The Lambda function must publish an event to Kafka.
+
+5.5 Logging and Observability
+All application logs must be forwarded to Elasticsearch and visualized in Kibana.
+Students must demonstrate filtering and searching capabilities in Kibana.
+6. Required Deliverables
+Students must submit the following:
+
+• Terraform configuration files
+• Screenshots from the AWS Console showing deployed resources
+• Screenshots from Kibana demonstrating log ingestion
+• A README.md file describing architecture, deployment steps, and assumptions
+7. Grading Rubric
+Infrastructure as Code (Terraform): 30%
+Kubernetes Deployment: 20%
+Kafka Integration: 15%
+AWS Service Integration: 15%
+Logging and Observability: 10%
+Documentation Quality: 10%
+8. Academic Integrity and Rules
+All submitted work must be original.
+Plagiarism or sharing solutions will result in a failing grade.
+All manual steps must be clearly documented.
+Architectural deviations must be justified.
+9. Submission Instructions
+Students must submit a single ZIP archive containing all project files and screenshots.
+Late submissions may be penalized according to course policy.
+10. Final Remarks
+This project represents a real-world DevOps deployment scenario.
+Evaluation will focus on correctness, clarity, architectural understanding, and professional documentation standards.
+
+
+
