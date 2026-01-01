@@ -351,6 +351,9 @@ resource "aws_instance" "kubernetes_master" {
                 mkdir -p /home/ec2-user/project
                 cd /home/ec2-user/project
 
+                # Get Private IP
+                PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+
                 # Create Directories
                 mkdir -p logstash/config logstash/pipeline api-gateway-proxy k8s
 
@@ -382,7 +385,7 @@ resource "aws_instance" "kubernetes_master" {
                       KAFKA_BROKER_ID: 1
                       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
                       # Use the EC2 private IP for the external listener so K8s pods can reach it
-                      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://${aws_instance.kubernetes_master.private_ip}:9092
+                      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://__PRIVATE_IP__:9092
                       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
                       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
                       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -471,6 +474,9 @@ resource "aws_instance" "kubernetes_master" {
                     driver: local
                 DOCKER_COMPOSE
 
+                # Replace placeholder with actual IP
+                sed -i "s/__PRIVATE_IP__/$PRIVATE_IP/g" docker-compose.yml
+
                 # Write Logstash Config
                 cat << 'LOGSTASH_YML' > logstash/config/logstash.yml
                 http.host: "0.0.0.0"
@@ -491,7 +497,7 @@ resource "aws_instance" "kubernetes_master" {
                 filter {
                   if ![timestamp] {
                     mutate {
-                      add_field => { "timestamp" => "%{@timestamp}" }
+                      add_field => { "timestamp" => "%%{@timestamp}" }
                     }
                   }
                   if [message] =~ /^\{.*\}$/ {
@@ -505,7 +511,7 @@ resource "aws_instance" "kubernetes_master" {
                 output {
                   elasticsearch {
                     hosts => ["elasticsearch:9200"]
-                    index => "logstash-%{+YYYY.MM.dd}"
+                    index => "logstash-%%{+YYYY.MM.dd}"
                   }
                   stdout { codec => rubydebug }
                 }
