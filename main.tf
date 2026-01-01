@@ -5,12 +5,12 @@ terraform {
 }
 
 provider "aws" {
-  region = "eu-central-1"
+  region = var.aws_region
 }
 
 # --- VPC & Networking ---
 resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   tags = { Name = "devops-project-vpc" }
 }
@@ -21,9 +21,9 @@ resource "aws_internet_gateway" "gw" {
 
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/24"
+  cidr_block              = var.subnet_cidr
   map_public_ip_on_launch = true
-  availability_zone       = "eu-central-1a"
+  availability_zone       = var.az
 }
 
 resource "aws_route_table" "rt" {
@@ -81,8 +81,8 @@ resource "local_file" "pem" {
 
 # --- EC2 Instance (K3s + Docker Compose) ---
 resource "aws_instance" "master" {
-  ami           = "ami-015f3aa67b494b27e" # Amazon Linux 2023 or similar
-  instance_type = "m5.large" # Needs RAM for ELK+Kafka
+  ami           = var.ami_id
+  instance_type = var.instance_type
   key_name      = aws_key_pair.kp.key_name
   subnet_id     = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.sg.id]
@@ -361,18 +361,4 @@ resource "aws_lambda_permission" "allow_api" {
   function_name = aws_lambda_function.func.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*/event"
-}
-
-# --- Outputs ---
-output "ssh_command" {
-  value = "ssh -i ${aws_key_pair.kp.key_name}.pem ec2-user@${aws_instance.master.public_ip}"
-}
-output "kibana_url" {
-  value = "http://${aws_instance.master.public_ip}:5601"
-}
-output "api_url" {
-  value = "${aws_apigatewayv2_api.api.api_endpoint}/event"
-}
-output "s3_bucket" {
-  value = aws_s3_bucket.b.id
 }
