@@ -17,8 +17,14 @@ resource "random_password" "k3s_token" {
   special = false
 }
 
+resource "random_string" "suffix" {
+  length  = 8
+  special = false
+  upper   = false
+}
+
 resource "aws_key_pair" "deployer" {
-  key_name   = var.key_name
+  key_name   = "${var.key_name}-${random_string.suffix.result}"
   public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDcIEgN19BZ9TPKu4Zv+HwwKDLlAuUXI1XuLXAtYDp+fGDPcaq8iwkg3VhyOdFlIKG32NyDpwmAIqZL8tdAXl/t60+yY76oaLRN0A1UGbRP4OfexvluRoJpyQ+jKfPqn4AlNcIu3sLpzY8wHnFmjcniOyQZrGIWVleZRX3vld1UuakFSF8CyD6jYgCPN0bLlAkiPs5ldMpKUtaN0CYI3SjwK0awH56jxfPsTi8y97RaEAMHNFoE0rKuHhWCer0tc2ISQeRJmsB3oFjZ2Way1ME3LI0B6W3iH+SGpMDPLsn5gw07gPvo0wI+CJMQizJ2X4mCj0NyiVLO1sECWdXVMvsj"
 }
 
