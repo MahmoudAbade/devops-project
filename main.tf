@@ -56,34 +56,11 @@ resource "aws_security_group" "sg" {
   egress { from_port = 0, to_port = 0, protocol = "-1", cidr_blocks = ["0.0.0.0/0"] }
 }
 
-# --- SSH Key ---
-resource "tls_private_key" "pk" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-resource "random_string" "suffix" {
-  length = 6
-  special = false
-  upper = false
-}
-
-resource "aws_key_pair" "kp" {
-  key_name   = "devops-key-${random_string.suffix.result}"
-  public_key = tls_private_key.pk.public_key_openssh
-}
-
-resource "local_file" "pem" {
-  content         = tls_private_key.pk.private_key_pem
-  filename        = "${aws_key_pair.kp.key_name}.pem"
-  file_permission = "0400"
-}
-
 # --- EC2 Instance (K3s + Docker Compose) ---
 resource "aws_instance" "master" {
   ami           = var.ami_id
   instance_type = var.instance_type
-  key_name      = aws_key_pair.kp.key_name
+  key_name      = var.key_name
   subnet_id     = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.sg.id]
 

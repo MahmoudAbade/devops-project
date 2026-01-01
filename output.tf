@@ -1,5 +1,5 @@
 output "ssh_command" {
-  value = "ssh -i ${aws_key_pair.kp.key_name}.pem ec2-user@${aws_instance.master.public_ip}"
+  value = "ssh -i ${var.key_name}.pem ec2-user@${aws_instance.master.public_ip}"
 }
 
 output "kibana_url" {
