@@ -1,6 +1,6 @@
 import json
-import os
 import urllib.request
+import os
 import logging
 
 logger = logging.getLogger()
@@ -8,75 +8,64 @@ logger.setLevel(logging.INFO)
 
 def lambda_handler(event, context):
     """
-    Lambda function triggered by S3 events.
-    Publishes event details to Kafka topic via REST Proxy.
+    Handles S3 events and API Gateway events, forwarding them to Kafka via REST Proxy.
     """
-    
-    logger.info(f"Received event: {json.dumps(event)}")
-    
-    # Get Kafka configuration from environment variables
-    kafka_rest_url = os.environ.get('KAFKA_REST_PROXY_URL')
-    kafka_topic = os.environ.get('KAFKA_TOPIC', 's3-events')
+    kafka_rest_url = os.environ.get('KAFKA_REST_URL') # e.g., http://<EC2_IP>:8082
     
     if not kafka_rest_url:
-        logger.warning("KAFKA_REST_PROXY_URL not set. Skipping publication to Kafka.")
+        logger.error("KAFKA_REST_URL not set")
+        return {"statusCode": 500, "body": "Configuration Error"}
 
-    # Parse S3 event
-    for record in event.get('Records', []):
-        try:
-            bucket_name = record['s3']['bucket']['name']
-            object_key = record['s3']['object']['key']
-            event_name = record['eventName']
-            event_time = record['eventTime']
+    records_to_send = []
 
-            # Create message payload
-            message = {
-                'event_type': 's3_upload',
-                'bucket': bucket_name,
-                'key': object_key,
-                'event_name': event_name,
-                'timestamp': event_time,
-                'size': record['s3']['object'].get('size', 0)
+    # 1. Handle S3 Events
+    if 'Records' in event and 's3' in event['Records'][0]:
+        topic = "s3-events"
+        for record in event['Records']:
+            payload = {
+                "source": "s3",
+                "bucket": record['s3']['bucket']['name'],
+                "key": record['s3']['object']['key'],
+                "time": record['eventTime']
             }
-            
-            logger.info(f"Processing S3 event: {json.dumps(message)}")
-            
-            if kafka_rest_url:
-                # Construct the REST Proxy URL for the topic
-                # Format: http://host:port/topics/topic_name
-                url = f"{kafka_rest_url}/topics/{kafka_topic}"
+            records_to_send.append((topic, payload))
 
-                # Payload for Kafka REST Proxy v2
-                payload = {
-                    "records": [
-                        {
-                            "value": message
-                        }
-                    ]
-                }
+    # 2. Handle API Gateway Events (HTTP API payload)
+    elif 'routeKey' in event or 'rawPath' in event:
+        topic = "api-events"
+        body = event.get('body', '{}')
+        try:
+            body_json = json.loads(body) if body else {}
+        except:
+            body_json = {"raw": body}
 
-                data = json.dumps(payload).encode('utf-8')
+        payload = {
+            "source": "api-gateway",
+            "path": event.get('rawPath'),
+            "data": body_json
+        }
+        records_to_send.append((topic, payload))
 
-                req = urllib.request.Request(url, data=data, method='POST')
-                req.add_header('Content-Type', 'application/vnd.kafka.json.v2+json')
-                req.add_header('Accept', 'application/vnd.kafka.v2+json')
+    # Fallback/Test
+    else:
+        topic = "api-events"
+        records_to_send.append((topic, {"source": "unknown", "raw": event}))
 
-                try:
-                    with urllib.request.urlopen(req, timeout=5) as response:
-                        if response.status == 200:
-                            logger.info(f"Successfully published to Kafka topic '{kafka_topic}'")
-                        else:
-                            logger.error(f"Failed to publish to Kafka: HTTP {response.status} {response.read().decode('utf-8')}")
-                except Exception as e:
-                     logger.error(f"Error calling Kafka REST Proxy: {str(e)}")
-            else:
-                logger.info(f"Dry run (Kafka not configured): {json.dumps(message)}")
+    # Send to Kafka REST
+    for topic, payload in records_to_send:
+        url = f"{kafka_rest_url}/topics/{topic}"
+        headers = {
+            "Content-Type": "application/vnd.kafka.json.v2+json",
+            "Accept": "application/vnd.kafka.v2+json"
+        }
+        data = json.dumps({"records": [{"value": payload}]}).encode('utf-8')
 
+        try:
+            req = urllib.request.Request(url, data=data, headers=headers, method='POST')
+            with urllib.request.urlopen(req, timeout=3) as res:
+                logger.info(f"Sent to {topic}: {res.status}")
         except Exception as e:
-            logger.error(f"Error processing record: {str(e)}")
-            # Don't raise, try to process other records
+            logger.error(f"Failed to send to {topic} at {url}: {e}")
+            # Don't fail the Lambda, just log. Setup might be starting up.
 
-    return {
-        'statusCode': 200,
-        'body': json.dumps('S3 event processed')
-    }
+    return {"statusCode": 200, "body": "Processed"}
