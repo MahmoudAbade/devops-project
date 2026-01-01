@@ -10,7 +10,7 @@ output "kubernetes_worker_public_ip" {
 
 output "api_gateway_url" {
   description = "API Gateway Invoke URL"
-  value       = "${aws_api_gateway_deployment.kafka_api_deployment.invoke_url}/events"
+  value       = "${aws_api_gateway_stage.kafka_api_stage.invoke_url}/events"
 }
 
 output "s3_bucket_name" {

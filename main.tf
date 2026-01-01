@@ -617,7 +617,7 @@ resource "aws_instance" "kubernetes_master" {
 
                             consumer = KafkaConsumer(
                                 "s3-events",
-                                bootstrap_servers=["${aws_instance.kubernetes_master.private_ip}:9092"],
+                                bootstrap_servers=["__PRIVATE_IP__:9092"],
                                 auto_offset_reset="earliest",
                                 value_deserializer=lambda x: json.loads(x.decode("utf-8"))
                             )
@@ -626,6 +626,9 @@ resource "aws_instance" "kubernetes_master" {
                                 print(f"Received: {message.value}")
                             '
                 K8S_S3
+
+                # Replace placeholder with actual IP in K8s manifest
+                sed -i "s/__PRIVATE_IP__/$PRIVATE_IP/g" k8s/kafka-consumer-s3-events.yaml
 
                 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
                 kubectl apply -f k8s/
