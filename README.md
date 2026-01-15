@@ -426,7 +426,7 @@ terraform destroy
    - Data lake integration
 
 ## Final Submittion Result
-    <img width="1808" height="634" alt="Screenshot (6)" src="https://github.com/user-attachments/assets/10485389-d9de-408f-8017-3b8e6b55272f" />
+    <img width="1808" height="634" alt="Screenshot (6)" src="https://github.com/MahmoudAbade/devops-project/blob/main/Screenshot%20(6).PNG" />
 
 ## References
 
