@@ -425,6 +425,9 @@ terraform destroy
    - Apache Flink for complex event processing
    - Data lake integration
 
+## Final Submittion Result
+    <img width="1808" height="634" alt="Screenshot (6)" src="https://github.com/user-attachments/assets/10485389-d9de-408f-8017-3b8e6b55272f" />
+
 ## References
 
 - [Terraform AWS Provider Documentation](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
@@ -435,11 +438,11 @@ terraform destroy
 
 ## License
 
-This project is for educational purposes as part of the DevOps course final project.
+This project is for educational purposes as part of the DevOps course final project from HackerU college.
 
 ## Author
 
-DevOps Course Final Project - 2025
+Mahmoud Abade - DevOps Course Final Project - HackerU 2025
 
 ## Support
 
